@@ -16,7 +16,7 @@ def format_bibtex(work):
 
     first_author = (
         work["authorships"][0]["author"]["display_name"].split()[-1]
-        if work.get("authorships") 
+        if work.get("authorships")
         and work["authorships"][0].get("author", {}).get("display_name")
         else "Unknown"
     )
@@ -28,8 +28,11 @@ def format_bibtex(work):
     citation_key = f"{first_author}{year}{title_first_word}"
 
     authors = " and ".join(
-        [a["author"]["display_name"] for a in work.get("authorships", []) 
-         if a.get("author", {}).get("display_name")]
+        [
+            a["author"]["display_name"]
+            for a in work.get("authorships", [])
+            if a.get("author", {}).get("display_name")
+        ]
     )
 
     return f"""@article{{{citation_key},
@@ -38,7 +41,7 @@ def format_bibtex(work):
   journal = {{{work.get("host_venue", {}).get("display_name", "")}}},
   year = {{{year}}},
   doi = {{{work.get("doi", "")}}},
-  url = {{{work.get("id", "")}}}
+  url = {{{work.get("primary_location", {}).get("landing_page_url") or work.get("id", "")}}}
 }}"""
 
 
@@ -47,8 +50,11 @@ def display_work(work, idx):
         "..." if len(work.get("title", "")) > 80 else ""
     )
     authors = ", ".join(
-        [a["author"]["display_name"] for a in work.get("authorships", []) 
-         if a.get("author", {}).get("display_name")][:3]
+        [
+            a["author"]["display_name"]
+            for a in work.get("authorships", [])
+            if a.get("author", {}).get("display_name")
+        ][:3]
     )
     if len(work.get("authorships", [])) > 3:
         authors += " et al."
@@ -76,62 +82,60 @@ def main():
     args = parser.parse_args()
 
     try:
-        with open(args.output, "a") as f:
+        while True:
+            query = input("\nEnter OpenAlex search query (type 'exit' to quit): ")
+            if query.lower() == "exit":
+                break
+
+            cursor = "*"  # Start cursor for pagination
+            page = 1
+            total_saved = 0
+
             while True:
-                query = input("\nEnter OpenAlex search query (type 'exit' to quit): ")
-                if query.lower() == "exit":
+                params = {
+                    "search": query,
+                    "per-page": args.per_page,
+                    "cursor": cursor,
+                }
+                response = requests.get(BASE_URL, params=params)
+                response.raise_for_status()
+                data = response.json()
+                results = data.get("results", [])
+                meta = data.get("meta")
+                next_cursor = meta.get("next_cursor")
+                total_count = data.get("meta", {}).get("count", 0)
+
+                if not results:
+                    if page == 1:
+                        print("No results found for your query.")
+                    else:
+                        print("No more results.")
                     break
 
-                cursor = "*"  # Start cursor for pagination
-                page = 1
-                total_saved = 0
+                print(
+                    f"\nPage {page} - Showing {len(results)} of {total_count} results for '{query}':"
+                )
+                for i, work in enumerate(results):
+                    print(display_work(work, i + 1))
 
-                while True:
-                    params = {
-                        "search": query,
-                        "per-page": args.per_page,
-                        "cursor": cursor,
-                    }
-                    response = requests.get(BASE_URL, params=params)
-                    response.raise_for_status()
-                    data = response.json()
-                    results = data.get("results", [])
-                    meta = data.get("meta")
-                    next_cursor = meta.get("next_cursor")
-                    total_count = data.get("meta", {}).get("count", 0)
+                selection = input(
+                    "\nSelect papers to save (e.g., 1,3,5 or 'all'): "
+                ).strip()
 
-                    if not results:
-                        if page == 1:
-                            print("No results found for your query.")
-                        else:
-                            print("No more results.")
-                        break
+                selected_works = []
+                if selection.lower() == "all":
+                    selected_works = results
+                elif selection:
+                    try:
+                        indices = [int(idx.strip()) - 1 for idx in selection.split(",")]
+                        selected_works = [
+                            results[i] for i in indices if 0 <= i < len(results)
+                        ]
+                    except ValueError:
+                        print("Invalid selection. No papers saved from this page.")
 
-                    print(
-                        f"\nPage {page} - Showing {len(results)} of {total_count} results for '{query}':"
-                    )
-                    for i, work in enumerate(results):
-                        print(display_work(work, i + 1))
-
-                    selection = input(
-                        "\nSelect papers to save (e.g., 1,3,5 or 'all'): "
-                    ).strip()
-
-                    selected_works = []
-                    if selection.lower() == "all":
-                        selected_works = results
-                    elif selection:
-                        try:
-                            indices = [
-                                int(idx.strip()) - 1 for idx in selection.split(",")
-                            ]
-                            selected_works = [
-                                results[i] for i in indices if 0 <= i < len(results)
-                            ]
-                        except ValueError:
-                            print("Invalid selection. No papers saved from this page.")
-
-                    if selected_works:
+                if selected_works:
+                    with open(args.output, "a") as f:
                         if args.format == "json":
                             json.dump(selected_works, f, indent=2)
                             f.write("\n")
@@ -143,20 +147,20 @@ def main():
                         total_saved += saved_count
                         print(f"✓ Saved {saved_count} papers to {args.output}")
 
-                    if not next_cursor or next_cursor == "*":
-                        print(f"End of results. Total saved: {total_saved}")
-                        break
+                if not next_cursor or next_cursor == "*":
+                    print(f"End of results. Total saved: {total_saved}")
+                    break
 
-                    # SIMPLE CONTINUE PROMPT
-                    action = input("\nContinue to next page? (Y/n): ").lower()
-                    if action == "n":
-                        print(f"Query complete. Total saved: {total_saved}")
-                        break
-                    else:
-                        print("Continuing to next page...")
+                # SIMPLE CONTINUE PROMPT
+                action = input("\nContinue to next page? (Y/n): ").lower()
+                if action == "n":
+                    print(f"Query complete. Total saved: {total_saved}")
+                    break
+                else:
+                    print("Continuing to next page...")
 
-                    cursor = next_cursor
-                    page += 1
+                cursor = next_cursor
+                page += 1
 
     except KeyboardInterrupt:
         print("\nExiting...")
