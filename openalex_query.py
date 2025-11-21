@@ -16,7 +16,8 @@ def format_bibtex(work):
 
     first_author = (
         work["authorships"][0]["author"]["display_name"].split()[-1]
-        if work.get("authorships")
+        if work.get("authorships") 
+        and work["authorships"][0].get("author", {}).get("display_name")
         else "Unknown"
     )
     title_first_word = (
@@ -27,7 +28,8 @@ def format_bibtex(work):
     citation_key = f"{first_author}{year}{title_first_word}"
 
     authors = " and ".join(
-        [a["author"]["display_name"] for a in work.get("authorships", [])]
+        [a["author"]["display_name"] for a in work.get("authorships", []) 
+         if a.get("author", {}).get("display_name")]
     )
 
     return f"""@article{{{citation_key},
@@ -45,7 +47,8 @@ def display_work(work, idx):
         "..." if len(work.get("title", "")) > 80 else ""
     )
     authors = ", ".join(
-        [a["author"]["display_name"] for a in work.get("authorships", [])][:3]
+        [a["author"]["display_name"] for a in work.get("authorships", []) 
+         if a.get("author", {}).get("display_name")][:3]
     )
     if len(work.get("authorships", [])) > 3:
         authors += " et al."
@@ -63,6 +66,13 @@ def main():
         default="json",
         help="Output format: json or bibtex (default: json)",
     )
+    parser.add_argument(
+        "-p",
+        "--per-page",
+        type=int,
+        default=25,
+        help="Per-page (default: 25)",
+    )
     args = parser.parse_args()
 
     try:
@@ -77,7 +87,11 @@ def main():
                 total_saved = 0
 
                 while True:
-                    params = {"search": query, "per-page": PER_PAGE, "cursor": cursor}
+                    params = {
+                        "search": query,
+                        "per-page": args.per_page,
+                        "cursor": cursor,
+                    }
                     response = requests.get(BASE_URL, params=params)
                     response.raise_for_status()
                     data = response.json()
@@ -134,14 +148,11 @@ def main():
                         break
 
                     # SIMPLE CONTINUE PROMPT
-                    action = input("\nContinue to next page? (y/n/q): ").lower()
+                    action = input("\nContinue to next page? (Y/n): ").lower()
                     if action == "n":
                         print(f"Query complete. Total saved: {total_saved}")
                         break
-                    elif action == "q":
-                        print(f"Starting new query. Total saved: {total_saved}")
-                        break
-                    elif action != "y":
+                    else:
                         print("Continuing to next page...")
 
                     cursor = next_cursor
